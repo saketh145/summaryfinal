@@ -1,46 +1,101 @@
-import os
 import streamlit as st
-import google_auth_oauthlib.flow
 import googleapiclient.discovery
 import googleapiclient.errors
-
-scopes = ["https://www.googleapis.com/auth/youtube.readonly"]
-
-
+from langchain_community.document_loaders import YoutubeLoader
+import load
 
 def main():
+    api_key = "AIzaSyCYUSC2ZeccGO7ax4FyETv6aSADU-fortU"  # Replace with your API key
     channelMail = st.text_input("Enter channel mail")
-    # Disable OAuthlib's HTTPS verification when running locally.
-    # *DO NOT* leave this option enabled in production.
-    os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 
     api_service_name = "youtube"
     api_version = "v3"
-    client_secrets_file = "desktop.json"
 
-    # Get credentials and create an API client
-    if(st.button("Enter")):
-        flow = google_auth_oauthlib.flow.InstalledAppFlow.from_client_secrets_file(
-            client_secrets_file, scopes)
-        credentials = flow.run_local_server(port=0)
+    # JavaScript to request notification permission on page load
+    st.components.v1.html("""
+        <script>
+            // Request notification permission when the page loads
+            document.addEventListener("DOMContentLoaded", function() {
+                Notification.requestPermission().then(function(permission) {
+                    if (permission === "granted") {
+                        console.log("Notification permission granted.");
+                    } else if (permission === "denied") {
+                        console.log("Notification permission denied.");
+                    }
+                });
+            });
+        </script>
+    """, height=0)
+
+    # Create an API client
+    if st.button("Enter"):
         youtube = googleapiclient.discovery.build(
-            api_service_name, api_version, credentials=credentials)
+            api_service_name, api_version, developerKey=api_key
+        )
 
         request = youtube.channels().list(
             part="snippet,contentDetails,statistics",
             forHandle=channelMail
         )
         response = request.execute()
-        channelID = response["items"][0]["id"]
-        request = youtube.search().list(
-            part="snippet",
-            channelId=channelID,
-            maxResults=1,
-            order="date"
-        )
-        response = request.execute()
-        st.write(response["items"][0]["id"]["videoId"]);
-        print(response["items"][0]["id"]["videoId"])
+        
+        if "items" in response and len(response["items"]) > 0:
+            channelID = response["items"][0]["id"]
+            request = youtube.search().list(
+                part="snippet",
+                channelId=channelID,
+                maxResults=1,
+                order="date"
+            )
+            response = request.execute()
+            
+            videoId = response["items"][0]["id"]["videoId"]
+            videoUrl = f"https://www.youtube.com/watch?v={videoId}"
+            st.write(videoUrl)
+
+            url = videoUrl
+            loader = YoutubeLoader.from_youtube_url(url, add_video_info=False)
+            transcript = loader.load()
+            response = load.output(str(transcript))
+            
+            for chunk in response:
+                st.write(chunk.text)
+
+            # Inject JavaScript to send a notification after summarization with redirection
+            st.components.v1.html(f"""
+                <script>
+                    // Function to send notification
+                    function sendNotification() {{
+                        if (Notification.permission === "granted") {{
+                            let notification = new Notification("Summarization complete!", {{
+                                body: "Click to view the summarized video.",
+                                icon: "https://example.com/icon.png"  // You can add an icon if needed
+                            }});
+                            notification.onclick = function() {{
+                                window.open("{videoUrl}", "_blank");
+                            }};
+                        }} else if (Notification.permission !== "denied") {{
+                            Notification.requestPermission().then(function(permission) {{
+                                if (permission === "granted") {{
+                                    let notification = new Notification("Summarization complete!", {{
+                                        body: "Click to view the summarized video.",
+                                        icon: "https://example.com/icon.png"
+                                    }});
+                                    notification.onclick = function() {{
+                                        window.open("{videoUrl}", "_blank");
+                                    }};
+                                }}
+                            }});
+                        }}
+                    }}
+
+                    // To Send the notification
+                    sendNotification();
+                </script>
+            """, height=0)
+
+        else:
+            st.write("No channel found for the provided email.")
 
 if __name__ == "__main__":
     main()
